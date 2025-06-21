@@ -1,11 +1,24 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "@remix-run/react";
 import { drugService, Drug } from "~/services/drug.service";
+import { socketService } from "~/services/socket.service";
+import { authService } from "~/services/auth.service";
 import type { MetaFunction } from "@remix-run/node";
 
 export const meta: MetaFunction = () => {
-  return [{ title: "Medication Database - MedTrack" }];
+  return [{ title: "Drug Library - MedTrack" }];
 };
+
+interface UserInfo {
+  id: string;
+  _id: string;
+  email: string;
+  username: string;
+  userType: "patient" | "pharmacy" | "admin";
+  firstName: string;
+  lastName: string;
+  exp: number;
+}
 
 interface DrugSearchResponse {
   success: boolean;
@@ -29,6 +42,37 @@ export default function DrugsPage() {
   const [selectedDrug, setSelectedDrug] = useState<Drug | null>(null);
   const [isDrugDetailsLoading, setIsDrugDetailsLoading] = useState(false);
   const location = useLocation();
+  const detailsRef = useRef<HTMLDivElement>(null);
+  // --- POPUP STATE FOR PHARMACIST REQUEST ---
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [popupNote, setPopupNote] = useState("");
+  const [popupLoading, setPopupLoading] = useState(false);
+  const [popupSent, setPopupSent] = useState(false);
+  const [popupError, setPopupError] = useState("");
+  const [popupResponse, setPopupResponse] = useState<string | null>(null);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+
+  useEffect(() => {
+    const user = authService.getUserInfo();
+    if (user) {
+      setUserInfo({
+        ...user,
+        userType: user.userType as UserInfo["userType"],
+      });
+    }
+  }, []);
+
+  // Listen for pharmacist popup response
+  useEffect(() => {
+    const handlePopupResponse = (data: { response: string }) => {
+      setPopupResponse(data.response);
+      setPopupOpen(true); // Open the modal if not already open
+    };
+    socketService.setupPopupResponseListener(handlePopupResponse);
+    return () => {
+      socketService.removePopupResponseListener();
+    };
+  }, []);
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
@@ -64,6 +108,12 @@ export default function DrugsPage() {
 
     if (drug) {
       setSelectedDrug(drug);
+      setTimeout(() => {
+        detailsRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 100);
     } else {
       fetchDrugDetails(drugId);
     }
@@ -79,6 +129,12 @@ export default function DrugsPage() {
       )) as DrugDetailsResponse;
       if (response && response.success && response.data) {
         setSelectedDrug(response.data);
+        setTimeout(() => {
+          detailsRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        }, 100);
       } else {
         setError(response?.message || "Failed to fetch drug details");
       }
@@ -90,12 +146,45 @@ export default function DrugsPage() {
     }
   };
 
+  const handleOpenPopup = () => {
+    setPopupOpen(true);
+    setPopupNote("");
+    setPopupSent(false);
+    setPopupError("");
+    setPopupResponse(null);
+  };
+  const handleClosePopup = () => {
+    setPopupOpen(false);
+    setPopupNote("");
+    setPopupSent(false);
+    setPopupError("");
+    setPopupResponse(null);
+  };
+  const handleSendPopupRequest = () => {
+    if (!selectedDrug || !popupNote.trim()) {
+      setPopupError("Please enter a note for the pharmacist.");
+      return;
+    }
+    const user = authService.getUserInfo();
+    if (!user) {
+      setPopupError("You must be logged in to request pharmacist attention.");
+      return;
+    }
+    setPopupLoading(true);
+    setPopupError("");
+    socketService.emitPatientPopupRequest({
+      userId: user._id,
+      drugId: selectedDrug.id,
+      note: popupNote,
+    });
+    setPopupSent(true);
+    setPopupLoading(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow-md p-6">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6">
-          Medication Database
-        </h1>
+        <h1 className="text-2xl font-bold text-gray-800 mb-6">Drug Library</h1>
 
         {/* Navigation Tabs */}
         <div className="border-b border-gray-200 mb-6">
@@ -125,7 +214,7 @@ export default function DrugsPage() {
                   ? "border-indigo-500 text-indigo-600"
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
               }`}>
-              Medication Database
+              Drug Library
             </Link>
           </nav>
         </div>
@@ -139,7 +228,7 @@ export default function DrugsPage() {
               <input
                 type="text"
                 id="search"
-                className="block w-full rounded-md border text-gray-900 border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-white placeholder:text-black"
+                className="block w-full rounded-md border text-gray-900 border-gray-500 shadow-sm h-full focus:border-indigo-500 focus:ring-indigo-500 bg-white placeholder:text-gray-500"
                 placeholder="Search by medication name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -188,83 +277,8 @@ export default function DrugsPage() {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Search Results */}
-          <div className="lg:col-span-1">
-            <h2 className="text-lg font-medium text-gray-900 mb-3">
-              Search Results
-            </h2>
-            {searchResults.length > 0 ? (
-              <div className="bg-gray-50 rounded-lg overflow-hidden border border-gray-200">
-                <ul className="divide-y divide-gray-200">
-                  {searchResults.map((drug) => (
-                    <li key={drug.id}>
-                      <button
-                        onClick={() => handleDrugSelect(drug.id)}
-                        className={`w-full px-4 py-3 text-left hover:bg-gray-100 transition-colors ${
-                          selectedDrug?.id === drug.id ? "bg-indigo-50" : ""
-                        }`}>
-                        <div className="font-medium text-gray-900">
-                          {drug.brandName}
-                        </div>
-                        {drug.genericName && (
-                          <div className="text-sm text-gray-500">
-                            {drug.genericName}
-                          </div>
-                        )}
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {drug.route && drug.route.length > 0 && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                              {drug.route[0]}
-                            </span>
-                          )}
-                          {drug.dosage && drug.dosage.length > 0 && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                              {drug.dosage[0]}
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : (
-              <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
-                {isLoading ? (
-                  <div className="animate-pulse">
-                    <div className="rounded-full bg-gray-200 h-10 w-10 mx-auto"></div>
-                    <div className="mt-4 h-4 bg-gray-200 rounded w-3/4 mx-auto"></div>
-                    <div className="mt-2 h-4 bg-gray-200 rounded w-1/2 mx-auto"></div>
-                  </div>
-                ) : (
-                  <>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      strokeWidth={1.5}
-                      stroke="currentColor"
-                      className="w-10 h-10 mx-auto text-gray-400">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
-                      />
-                    </svg>
-                    <h3 className="mt-2 text-sm font-medium text-gray-900">
-                      No medications found
-                    </h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Try searching for a medication name
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
           {/* Drug Details */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2" ref={detailsRef}>
             <h2 className="text-lg font-medium text-gray-900 mb-3">
               Medication Details
             </h2>
@@ -362,13 +376,106 @@ export default function DrugsPage() {
                   </div>
                 </div>
 
-                <div className="mt-8">
-                  <Link
-                    to={`/medications/add?prefill=${selectedDrug.id}`}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                    Add This Medication to My List
-                  </Link>
-                </div>
+                {/* Request Drug Button */}
+                {userInfo && userInfo.userType === "patient" && (
+                  <div className="mt-4 mb-4">
+                    <button
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                      onClick={handleOpenPopup}>
+                      Request Drug
+                    </button>
+                  </div>
+                )}
+                {/* Popup Modal */}
+                {popupOpen && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+                    <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md relative">
+                      <button
+                        className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"
+                        onClick={handleClosePopup}
+                        aria-label="Close">
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-6 w-6"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      </button>
+                      <h2 className="text-lg font-semibold text-blue-800 mb-2 flex items-center">
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-5 w-5 mr-2"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 100-16 8 8 0 000 16z"
+                          />
+                        </svg>
+                        Request Drug
+                      </h2>
+                      {popupResponse && (
+                        <div className="bg-green-100 text-green-800 rounded p-3 mb-2">
+                          Pharmacist Response: {popupResponse}
+                        </div>
+                      )}
+                      {popupSent && !popupResponse ? (
+                        <div className="bg-green-100 text-green-800 rounded p-3 mb-2">
+                          Request sent! A pharmacist will be notified.
+                        </div>
+                      ) : !popupSent && !popupResponse ? (
+                        <>
+                          <label
+                            htmlFor="popup-note"
+                            className="block text-sm font-medium text-gray-700 mb-1">
+                            Note for Pharmacist{" "}
+                            <span className="text-red-500">*</span>:
+                          </label>
+                          <textarea
+                            id="popup-note"
+                            className="border border-blue-300 rounded px-3 py-2 text-sm w-full mb-2"
+                            placeholder="Enter your note or question"
+                            value={popupNote}
+                            onChange={(e) => setPopupNote(e.target.value)}
+                            disabled={popupLoading}
+                            rows={3}
+                          />
+                          {popupError && (
+                            <div className="text-red-600 text-sm mb-2">
+                              {popupError}
+                            </div>
+                          )}
+                          <button
+                            onClick={handleSendPopupRequest}
+                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm w-full"
+                            disabled={popupLoading || !popupNote.trim()}>
+                            {popupLoading ? "Sending..." : "Request Drug"}
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
+
+                {userInfo && userInfo.userType === "patient" && (
+                  <div className="mt-8">
+                    <Link
+                      to={`/medications/add?prefill=${selectedDrug.id}`}
+                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                      Add This Medication to My List
+                    </Link>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
@@ -402,6 +509,80 @@ export default function DrugsPage() {
                     <p className="mt-1 text-sm text-gray-500">
                       Search for a medication and select it to view detailed
                       information
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+          {/* Search Results */}
+          <div className="lg:col-span-1">
+            <h2 className="text-lg font-medium text-gray-900 mb-3">
+              Search Results
+            </h2>
+            {searchResults.length > 0 ? (
+              <div className="bg-gray-50 rounded-lg overflow-hidden border border-gray-200">
+                <ul className="divide-y divide-gray-200">
+                  {searchResults.map((drug) => (
+                    <li key={drug.id}>
+                      <button
+                        onClick={() => handleDrugSelect(drug.id)}
+                        className={`w-full px-4 py-3 text-left hover:bg-gray-100 transition-colors ${
+                          selectedDrug?.id === drug.id ? "bg-indigo-50" : ""
+                        }`}>
+                        <div className="font-medium text-gray-900">
+                          {drug.brandName}
+                        </div>
+                        {drug.genericName && (
+                          <div className="text-sm text-gray-500">
+                            {drug.genericName}
+                          </div>
+                        )}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {drug.route && drug.route.length > 0 && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                              {drug.route[0]}
+                            </span>
+                          )}
+                          {drug.dosage && drug.dosage.length > 0 && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                              {drug.dosage[0]}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
+                {isLoading ? (
+                  <div className="animate-pulse">
+                    <div className="rounded-full bg-gray-200 h-10 w-10 mx-auto"></div>
+                    <div className="mt-4 h-4 bg-gray-200 rounded w-3/4 mx-auto"></div>
+                    <div className="mt-2 h-4 bg-gray-200 rounded w-1/2 mx-auto"></div>
+                  </div>
+                ) : (
+                  <>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                      className="w-10 h-10 mx-auto text-gray-400">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+                      />
+                    </svg>
+                    <h3 className="mt-2 text-sm font-medium text-gray-900">
+                      No medications found
+                    </h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Try searching for a medication name
                     </p>
                   </>
                 )}

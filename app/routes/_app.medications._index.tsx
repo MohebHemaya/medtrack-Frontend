@@ -72,7 +72,7 @@ export default function MedicationsPage() {
             Medication Management
           </h1>
           <Link
-            to="/medications/add"
+            to="/drugs"
             className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -119,7 +119,7 @@ export default function MedicationsPage() {
                   ? "border-indigo-500 text-indigo-600"
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
               }`}>
-              Medication Database
+              Drug Library
             </Link>
           </nav>
         </div>
@@ -161,8 +161,8 @@ export default function MedicationsPage() {
             </div>
           </div>
         ) : (
-          <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-            <table className="min-w-full divide-y divide-gray-300 ">
+          <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+            <table className="min-w-full divide-y divide-gray-300 text-sm text-gray-500 font-medium table-auto">
               <thead className="bg-gray-50">
                 <tr>
                   <th
@@ -188,7 +188,6 @@ export default function MedicationsPage() {
                   <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
                     <span className="sr-only">Actions</span>
                   </th>
-                  
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
@@ -202,7 +201,9 @@ export default function MedicationsPage() {
                         {medication.genericName}
                       </div>
                     </td>
-                    <td className="whitespace-wrap px-3 py-4 text-sm  text-gray-500">
+                    <td
+                      className="px-3 py-4 text-sm text-gray-500 max-w-xs truncate"
+                      title={medication.dosage}>
                       {medication.dosage}
                     </td>
                     <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
@@ -225,11 +226,7 @@ export default function MedicationsPage() {
                           className="text-indigo-600 hover:text-indigo-900">
                           View
                         </Link>
-                        <Link
-                          to={`/medications/${medication._id}/edit`}
-                          className="text-blue-600 hover:text-blue-900">
-                          Edit
-                        </Link>
+
                         <button
                           onClick={() => handleDeleteMedication(medication._id)}
                           className="text-red-600 hover:text-red-900">
